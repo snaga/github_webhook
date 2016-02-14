@@ -5,6 +5,8 @@
 # Copyright(c) 2016 Uptime Technologies LLC
 
 import BaseHTTPServer
+import hashlib
+import hmac
 import json
 import subprocess
 # pip install IPy
@@ -23,6 +25,8 @@ allowed_hosts = [
     # local test
     '10.0.2.0/24'
 ]
+
+webhook_secret = 'your_secret_here'
 
 class GithubWebhookRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
     def __init__(self, request, client_address, server):
@@ -47,6 +51,30 @@ class GithubWebhookRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             self.send_response(404, "url not found.")
             self.end_headers()
             self.wfile.write("url not found.")
+            return
+
+        # sha1 check
+        if 'X-Hub-Signature' not in self.headers:
+            self.send_response(403, "permission denied.")
+            self.end_headers()
+            self.wfile.write("permission denied.")
+            return
+
+        signature = self.headers['X-Hub-Signature']
+        (algo,digest) = signature.split('=')
+        if algo != 'sha1':
+            self.send_response(501, "internal error.")
+            self.end_headers()
+            self.wfile.write("internal error.")
+            return
+
+        payload = self.rfile.read(int(self.headers.getheader('content-length')))
+        digest2 = hmac.new(webhook_secret, payload, hashlib.sha1).hexdigest()
+
+        if digest != digest2:
+            self.send_response(403, "permission denied.")
+            self.end_headers()
+            self.wfile.write("permission denied.")
             return
 
         # ok. let's process the request.
