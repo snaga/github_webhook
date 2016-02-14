@@ -5,6 +5,7 @@
 # Copyright(c) 2016 Uptime Technologies LLC
 
 import BaseHTTPServer
+import json
 import subprocess
 # pip install IPy
 from IPy import IP
@@ -27,7 +28,7 @@ class GithubWebhookRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
     def __init__(self, request, client_address, server):
         BaseHTTPServer.BaseHTTPRequestHandler.__init__(self, request, client_address, server)
 
-    def do_GET(self):
+    def do_POST(self):
         # host check
         is_allowed = False
         for host in allowed_hosts:
@@ -48,21 +49,20 @@ class GithubWebhookRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             self.wfile.write("url not found.")
             return
 
-        # ok. process request.
-        self.send_response(200, "webhook called.")
-        self.end_headers()
-        p = subprocess.Popen(urls[self.path], stdout=subprocess.PIPE)
+        # ok. let's process the request.
+        p = subprocess.Popen(urls[self.path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         (stdoutdata, stderrdata) = p.communicate(None)
 
-        resp = ""
-        for h in self.headers:
-            resp = resp + str(h) + ": " + self.headers[h] + "\n"
-        resp = resp + "\n"
-        resp = resp + str(stdoutdata)
-        resp = resp + "\nreturncode: " + str(p.returncode)
+        self.send_response(200, "webhook invoked.")
+        self.end_headers()
+        resp = {}
+        resp['stdout'] = str(stdoutdata)
+        resp['stderr'] = str(stderrdata)
+        resp['returncode'] = str(p.returncode)
 
-        self.wfile.write(resp)
-        print(resp)
+        self.wfile.write(json.dumps(resp))
+
+#        print(json.dumps(resp))
 
 class GithubWebhook():
     httpd = None
