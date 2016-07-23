@@ -4,7 +4,7 @@
 #
 # Copyright(c) 2016 Uptime Technologies LLC
 
-import BaseHTTPServer
+from bottle import route, run, request, abort
 import hashlib
 import hmac
 import json
@@ -28,80 +28,47 @@ allowed_hosts = [
 
 webhook_secret = 'your_secret_here'
 
-class GithubWebhookRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
-    def __init__(self, request, client_address, server):
-        BaseHTTPServer.BaseHTTPRequestHandler.__init__(self, request, client_address, server)
+@route('/foobar', method='POST')
+def githubwebhook():
+    # host check
+    is_allowed = False
+    for host in allowed_hosts:
+        ip = IP(host)
+        if request.environ.get('REMOTE_ADDR') in ip:
+            is_allowed = True
+            
+    if is_allowed is False:
+        abort(403, "permission denied. [1]")
+        return
+    
+    # sha1 check
+    if 'X-Hub-Signature' not in request.headers:
+        abort(403, "permission denied. [2]")
+        return
 
-    def do_POST(self):
-        # host check
-        is_allowed = False
-        for host in allowed_hosts:
-            ip = IP(host)
-            if self.client_address[0] in ip:
-                is_allowed = True
+    signature = request.headers.get('X-Hub-Signature')
+    (algo,digest) = signature.split('=')
+    if algo != 'sha1':
+        abort(501, "internal error.")
+        return
 
-        if is_allowed is False:
-            self.send_response(403, "permission denied.")
-            self.end_headers()
-            self.wfile.write("permission denied.")
-            return
+    payload = request['wsgi.input'].read(int(request.headers.get('Content-Length')))
+    digest2 = hmac.new(webhook_secret, payload, hashlib.sha1).hexdigest()
 
-        # url check
-        if self.path not in urls:
-            self.send_response(404, "url not found.")
-            self.end_headers()
-            self.wfile.write("url not found.")
-            return
+    if digest != digest2:
+        abort(403, "permission denied. [3]")
+        return
 
-        # sha1 check
-        if 'X-Hub-Signature' not in self.headers:
-            self.send_response(403, "permission denied.")
-            self.end_headers()
-            self.wfile.write("permission denied.")
-            return
+    # ok. let's process the request.
+    p = subprocess.Popen(urls[request.environ.get('PATH_INFO')],
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    (stdoutdata, stderrdata) = p.communicate(None)
+    
+    resp = {}
+    resp['stdout'] = str(stdoutdata)
+    resp['stderr'] = str(stderrdata)
+    resp['returncode'] = str(p.returncode)
 
-        signature = self.headers['X-Hub-Signature']
-        (algo,digest) = signature.split('=')
-        if algo != 'sha1':
-            self.send_response(501, "internal error.")
-            self.end_headers()
-            self.wfile.write("internal error.")
-            return
+    return json.dumps(resp)
 
-        payload = self.rfile.read(int(self.headers.getheader('content-length')))
-        digest2 = hmac.new(webhook_secret, payload, hashlib.sha1).hexdigest()
-
-        if digest != digest2:
-            self.send_response(403, "permission denied.")
-            self.end_headers()
-            self.wfile.write("permission denied.")
-            return
-
-        # ok. let's process the request.
-        p = subprocess.Popen(urls[self.path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        (stdoutdata, stderrdata) = p.communicate(None)
-
-        self.send_response(200, "webhook invoked.")
-        self.end_headers()
-        resp = {}
-        resp['stdout'] = str(stdoutdata)
-        resp['stderr'] = str(stderrdata)
-        resp['returncode'] = str(p.returncode)
-
-        self.wfile.write(json.dumps(resp))
-
-#        print(json.dumps(resp))
-
-class GithubWebhook():
-    httpd = None
-
-    def __init__(self, server_addr, server_port):
-        self.httpd = BaseHTTPServer.HTTPServer((server_addr, server_port), GithubWebhookRequestHandler)
-
-    def run(self):
-        while True:
-            self.httpd.handle_request()
-
-hookserver = GithubWebhook('', port)
-
-hookserver.run()
+run(host='', port=port, debug=True)
